@@ -434,6 +434,10 @@ ml = [
     { name = "requests" },
     { name = "scikit-learn" },
 ]
+serving = [
+    { name = "mlflow" },
+    { name = "scikit-learn" },
+]
 tracking = [
     { name = "boto3" },
     { name = "mlflow" },
@@ -463,6 +467,10 @@ ml = [
     { name = "mlflow", specifier = "==3.17.0" },
     { name = "pandas", specifier = ">=2.2,<3" },
     { name = "requests", specifier = ">=2.32,<3" },
+    { name = "scikit-learn", specifier = ">=1.6,<2" },
+]
+serving = [
+    { name = "mlflow", specifier = "==3.17.0" },
     { name = "scikit-learn", specifier = ">=1.6,<2" },
 ]
 tracking = [

@@ -6,11 +6,17 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/cfpb
       LOG_LEVEL: INFO
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
+      MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+      MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD: "false"
     ports:
       - "8080:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      model-check:
+        condition: service_completed_successfully
     networks:
       - cfpb
     healthcheck:
@@ -29,12 +35,56 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 512M
+          memory: 1G
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+  model-check:
+    build:
+      context: .
+    image: cfpb-model-check:local
+    command: ["python", "-m", "cfpb_complaint_classifier.services.inference"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
+      MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - cfpb
+
+  training:
+    profiles: ["training"]
+    build:
+      context: .
+      dockerfile: docker/training.Dockerfile
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
+      MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+      MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD: "false"
+      MLFLOW_ENABLE_PROXY_MULTIPART_UPLOAD: "false"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        if [ ! -f data/cfpb/manifest.json ]; then
+          python -m training.prepare
+        fi
+        python -m training.eda
+        python -m training.train
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    networks:
+      - cfpb
 
   postgres:
     image: postgres:16-alpine
@@ -107,7 +157,7 @@ services:
     build:
       context: .
       dockerfile: docker/mlflow.Dockerfile
-    image: cfpb-mlflow:local
+    image: cfpb-minio-init:local
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}

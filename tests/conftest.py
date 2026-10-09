@@ -2,6 +2,21 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from cfpb_complaint_classifier import app as app_module
+from cfpb_complaint_classifier.services.inference import LoadedModel
+
+
+class FakePipeline:
+    def predict(self, texts):
+        return ["Debt collection"] * len(texts)
+
+
+@pytest.fixture(autouse=True)
+def stub_model_loading(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "load_registered_model",
+        lambda settings: LoadedModel(FakePipeline(), "cfpb-complaint-classifier", "7"),
+    )
 
 
 class HealthyConnection:

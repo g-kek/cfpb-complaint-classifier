@@ -16,11 +16,14 @@ MLOps-система для автоматической классификац�
 - Ruff lint/format, pytest coverage, pre-commit, Dockerfile, Docker Compose, CI и CD.
 - MLflow с PostgreSQL для метаданных и MinIO для артефактов.
 - Подготовка выборки CFPB, EDA, три варианта классификатора и Model Registry.
+- `POST /process`: классификация текста моделью из Registry, загруженной один раз
+  при старте. Ответ содержит категорию, имя модели и фактическую версию.
 
 ## Локальный запуск
 
 ```bash
 python3 -m uv sync --all-groups
+# Сначала запустите MLflow, подготовьте данные и обучите модели (см. ниже).
 python3 -m uv run uvicorn cfpb_complaint_classifier.app:app --reload
 ```
 
@@ -29,7 +32,9 @@ python3 -m uv run uvicorn cfpb_complaint_classifier.app:app --reload
 ## Запуск через Docker Compose
 
 ```bash
-docker compose up --build
+docker compose up -d --build mlflow
+docker compose --profile training run --build --rm training
+docker compose up -d --build app
 ```
 
 Compose поднимает сервисы:
@@ -40,9 +45,28 @@ Compose поднимает сервисы:
 - `mlflow-db` — отдельный PostgreSQL без внешнего порта;
 - `minio` — S3 API на порту `9000`, консоль на `9001`;
 - `minio-init` — создаёт bucket `mlflow-artifacts` и завершается.
+- `model-check` — проверяет существование настроенного alias и готовность версии,
+  завершается перед запуском приложения;
+- `training` (profile `training`) — подготовка данных, EDA и обучение по отдельной команде.
+
+На первом запуске обучение должно завершиться до запуска `app`. Оно скачивает
+официальный архив CFPB и создаёт две версии модели и alias `champion`.
+При повторном запуске достаточно `docker compose up -d app`: версии и артефакты
+сохраняются в volumes. Обучение повторно запускайте только для нового эксперимента;
+при наличии `data/cfpb/manifest.json` сервис использует сохранённые splits.
+Если Registry пуст или alias отсутствует, `model-check` завершится с ошибкой,
+а `app` не начнёт обслуживать запросы. Если артефакты недоступны, startup самого
+`app` также завершится с ошибкой. Диагностика: `docker compose logs model-check app`.
 
 Приложение и его PostgreSQL имеют healthcheck, лимиты ресурсов и ротацию логов.
 MLflow, его БД и MinIO тоже проверяются через healthcheck.
+
+На ноутбуке с ограниченными ресурсами полный стек можно запускать на другой машине.
+Локальному приложению достаточно доступного `MLFLOW_TRACKING_URI` и модели в Registry;
+это не требует увеличения лимитов Docker на ноутбуке. Unit- и integration-тесты
+запускаются без Docker: тест Registry использует временную SQLite БД и локальные
+артефакты. Такая проверка подтверждает поведение приложения, но не заменяет проверку
+PostgreSQL, MinIO и сетевых связей Compose.
 
 ## Обучение с MLflow
 
@@ -69,7 +93,7 @@ Backend Store — БД `mlflow` в `mlflow-db`, volume `mlflow-db-data`.
 Там находятся Runs, параметры, метрики, сведения о датасетах и Registry.
 Artifact Store — bucket `mlflow-artifacts` в MinIO, volume `minio-data`.
 MLflow передаёт артефакты в MinIO через свой сервер, поэтому скриптам обучения
-и будущему inference-приложению достаточно адреса MLflow.
+и inference-приложению достаточно адреса MLflow.
 Скрипты отключают прямые multipart-загрузки и скачивания: имя `minio`
 доступно внутри Docker, а клиент на хосте получает файлы через MLflow.
 
@@ -188,11 +212,85 @@ print(model.predict(["A debt collector keeps calling about a debt I do not owe."
 PY
 ```
 
-Для второго этапа: вход Pipeline — список строк, выход — массив строк с категориями.
-Загрузка через Registry выполняется при старте приложения. Номер версии нужно
-сохранить вместе с моделью, чтобы ответ `/process` показывал фактически загруженную версию.
-Внутри Compose адрес MLflow — `http://mlflow:5000`.
-Сам `/process` относится к следующему этапу и пока не реализован.
+### Inference и POST /process
+
+Настройки подключения находятся в `.env.example`:
+`MLFLOW_TRACKING_URI`, `MLFLOW_MODEL_NAME`, `MLFLOW_MODEL_ALIAS`.
+На хосте URI по умолчанию `http://127.0.0.1:5001`, внутри Compose —
+`http://mlflow:5000`. Compose задаёт внутренний адрес независимо от `.env`.
+
+Lifespan получает версию через `get_model_version_by_alias`, затем загружает
+`models:/<name>/<version>` через `mlflow.sklearn.load_model`. Alias разрешается
+ровно один раз за запуск процесса. Pipeline и номер версии сохраняются вместе
+в `app.state.model`. Даже если alias изменится во время скачивания, загрузится
+именно разрешённая версия. Это соответствует
+[механизму версий и alias MLflow](https://mlflow.org/docs/latest/ml/model-registry/workflow/).
+Вход Pipeline — список строк, выход — массив категорий.
+При нескольких worker каждый процесс загружает свой экземпляр модели.
+
+Асинхронный endpoint использует `run_in_threadpool` для синхронного `predict`,
+чтобы не блокировать event loop. Текст должен быть строкой от 1 до 20 000 символов;
+пробелы нормализуются так же, как при подготовке данных, пустой текст отклоняется.
+Ошибки входа дают HTTP 422, ошибка inference — HTTP 503.
+Модель обучена на английских жалобах CFPB.
+
+```bash
+curl -sS http://127.0.0.1:8080/process \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"A debt collector keeps calling about a debt I do not owe."}'
+```
+
+Пример ответа (категория зависит от обученной модели, версия — от Registry):
+
+```json
+{"category":"Debt collection","model_name":"cfpb-complaint-classifier","model_version":"2"}
+```
+
+Swagger UI: http://127.0.0.1:8080/docs. При локальном запуске через uvicorn
+используйте порт 8000 вместо 8080.
+
+### Защита: переключение alias
+
+1. В MLflow UI откройте Models → cfpb-complaint-classifier и проверьте две версии,
+   ссылки на Runs, метрики, signature и входной пример.
+2. Выполните запрос выше и запомните `model_version`.
+3. Назначьте `champion` другой версии в UI. Повторный запрос ещё вернёт прежнюю
+   версию: приложение использует модель, уже загруженную в память.
+4. Выполните `docker compose restart app` и повторите запрос. В ответе будет
+   новая версия без изменения inference-кода. Номер установленного Python-пакета
+   из `/api/v1/version` и номер модели из `/process` — разные сущности.
+
+Автоматическая проверка того же сценария:
+
+```bash
+uv run python scripts/verify_alias_switch.py
+```
+
+Скрипт проверяет ответы до переключения, после переключения без перезапуска
+и после перезапуска. В конце восстанавливает исходный alias и перезапускает
+приложение обратно. Результат сохраняется в `reports/inference/alias-switch.json`.
+Должны работать Compose и приложение, и в Registry нужны две версии.
+Для нестандартных настроек передайте `--tracking-uri`, `--app-url`,
+`--model-name`, `--alias` или `--target-version`.
+
+### Почему «горячее обновление» проблематично
+
+Alias — изменяемый указатель в Registry, а модель в памяти — конкретный экземпляр.
+Смена указателя сама по себе его не обновляет. Если скачивать модель на каждый
+запрос, растут задержки и зависимость от доступности MLflow. Если обновлять её
+фоном без координации, разные worker могут одновременно обслуживать разные версии,
+а конкурентные запросы — попасть на разные экземпляры. Отдельное чтение alias
+для поля ответа может сообщить версию, которой фактически не было выполнено
+предсказание. Новая модель также может оказаться несовместимой или не загрузиться.
+
+Для учебной работы используется явный перезапуск с закреплением версии на startup.
+Для production лучше разрешать alias на этапе deployment, фиксировать версию
+для всех реплик, загружать и прогревать её в новых процессах, проверять readiness
+и переключать трафик через rolling или blue-green deployment. Canary позволяет
+проверить качество и задержки на части запросов; предыдущая версия остаётся для
+быстрого rollback. Если действительно требуется обновление внутри процесса,
+нужны отдельная загрузка и проверка кандидата, атомарная замена пары
+«модель + версия», завершение старых запросов и координация реплик.
 
 Остановить инфраструктуру: `docker compose down`. Без `-v` данные MLflow и MinIO
 сохраняются. Папки `data/` и `reports/` не попадают в Git и Docker build context.
@@ -207,6 +305,9 @@ python3 -m uv run pre-commit run --all-files
 ```
 
 Coverage настроен в `pyproject.toml` и падает ниже 85%.
+Тесты проверяют endpoint и валидацию, thread pool, однократную загрузку,
+ошибки startup/inference и сценарий реального MLflow Registry:
+запрос → смена alias → прежняя версия → перезапуск → новая версия.
 
 ## CI/CD
 
