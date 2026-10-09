@@ -22,6 +22,18 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.16.8",
 ]
+ml = [
+    "matplotlib>=3.9,<4",
+    "mlflow==3.17.0",
+    "pandas>=2.2,<3",
+    "requests>=2.32,<3",
+    "scikit-learn>=1.6,<2",
+]
+tracking = [
+    "boto3>=1.35,<2",
+    "mlflow==3.17.0",
+    "psycopg2-binary>=2.9,<3",
+]
 web = [
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
@@ -35,16 +47,17 @@ default-groups = ["web", "dev"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 addopts = [
     "--cov=cfpb_complaint_classifier",
+    "--cov=training",
     "--cov-report=term-missing",
     "--cov-fail-under=85",
 ]
 
 [tool.coverage.run]
 branch = true
-source = ["cfpb_complaint_classifier"]
+source = ["cfpb_complaint_classifier", "training"]
 
 [tool.ruff]
 line-length = 88
