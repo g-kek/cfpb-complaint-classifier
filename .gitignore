@@ -203,6 +203,11 @@ cython_debug/
 # .vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
+data/
+reports/
+mlruns/
+mlartifacts/
+mlflow.db
 
 # Ruff stuff:
 .ruff_cache/

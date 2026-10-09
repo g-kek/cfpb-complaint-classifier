@@ -12,3 +12,7 @@ tests
 Dockerfile
 docker-compose.yml
 LICENSE
+data/
+reports/
+mlruns/
+mlartifacts/

@@ -7,7 +7,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/cfpb
       LOG_LEVEL: INFO
     ports:
-      - "8000:8000"
+      - "8080:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,8 +64,104 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  mlflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:-mlflow}
+    volumes:
+      - mlflow-db-data:/var/lib/postgresql/data
+    networks:
+      - cfpb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    build:
+      context: .
+      dockerfile: docker/minio.Dockerfile
+    image: cfpb-minio:local
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-local-password}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - cfpb
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/minio/health/live', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-init:
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    image: cfpb-mlflow:local
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio-local-password}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: ["python", "/app/init_bucket.py"]
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - cfpb
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: docker/mlflow.Dockerfile
+    image: cfpb-mlflow:local
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio-local-password}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_DB_PASSWORD: ${MLFLOW_DB_PASSWORD:-mlflow}
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        exec mlflow server \
+          --backend-store-uri "postgresql://mlflow:$$MLFLOW_DB_PASSWORD@mlflow-db:5432/mlflow" \
+          --serve-artifacts \
+          --artifacts-destination s3://mlflow-artifacts \
+          --host 0.0.0.0 --port 5000 --workers 1 \
+          --allowed-hosts 'localhost:*,127.0.0.1:*,mlflow:5000'
+    ports:
+      - "127.0.0.1:${MLFLOW_PORT:-5001}:5000"
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    networks:
+      - cfpb
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
 volumes:
   postgres-data:
+  mlflow-db-data:
+  minio-data:
 
 networks:
   cfpb:
