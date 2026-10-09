@@ -34,6 +34,10 @@ tracking = [
     "mlflow==3.17.0",
     "psycopg2-binary>=2.9,<3",
 ]
+serving = [
+    "mlflow==3.17.0",
+    "scikit-learn>=1.6,<2",
+]
 web = [
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
@@ -43,7 +47,7 @@ web = [
 ]
 
 [tool.uv]
-default-groups = ["web", "dev"]
+default-groups = ["web", "serving", "dev"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

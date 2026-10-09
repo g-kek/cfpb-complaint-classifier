@@ -34,3 +34,6 @@ jobs:
 
       - name: Tests with coverage
         run: uv run pytest
+
+      - name: Validate Compose configuration
+        run: docker compose --profile training config --quiet
