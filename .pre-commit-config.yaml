@@ -4,12 +4,15 @@ repos:
     hooks:
       - id: check-added-large-files
         args: ["--maxkb=1024"]
+        exclude: ^docs/experiments/.*\.csv$
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
       - id: debug-statements
       - id: end-of-file-fixer
+        exclude: ^docs/experiments/.*\.csv$
       - id: trailing-whitespace
+        exclude: ^docs/experiments/.*\.csv$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.8

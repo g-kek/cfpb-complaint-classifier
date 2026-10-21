@@ -22,6 +22,12 @@ from cfpb_complaint_classifier.services import inference
 from cfpb_complaint_classifier.services.inference import LoadedModel
 
 
+@pytest.fixture(autouse=True)
+def stub_retry_storage(monkeypatch):
+    monkeypatch.setattr(worker_module, "get_result", AsyncMock(return_value=None))
+    monkeypatch.setattr(worker_module, "claim_attempt", AsyncMock(return_value=1))
+
+
 async def test_startup_loads_once_and_offloads_inference(monkeypatch):
     event_loop_thread = threading.get_ident()
     worker_threads = []
@@ -166,7 +172,7 @@ async def test_worker_health_responds_while_predict_is_busy(monkeypatch):
 
 
 async def test_real_registry_alias_changes_only_after_restart(tmp_path, monkeypatch):
-    """Use real MLflow versions and artifacts across two application lifespans."""
+
     uri = f"sqlite:///{tmp_path / 'registry.db'}"
     old_tracking = mlflow.get_tracking_uri()
     old_registry = mlflow.get_registry_uri()

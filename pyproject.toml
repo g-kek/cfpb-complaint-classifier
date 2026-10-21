@@ -93,3 +93,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101"]
+"tests/test_pipeline_integration.py" = ["ASYNC109"]
+"scripts/run_backpressure_experiments.py" = ["S603"]
+"scripts/verify_alias_switch.py" = ["S607"]
+"scripts/verify_backpressure_defense.py" = ["ASYNC110"]

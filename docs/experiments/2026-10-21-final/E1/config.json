@@ -1,0 +1,29 @@
+{
+  "mode": "E1",
+  "bounded": false,
+  "workers": 1,
+  "queue": "experiment.2964798200ad.e1",
+  "queue_limit": null,
+  "prefetch_per_worker": 0,
+  "concurrency_per_worker": 2,
+  "inference_delay_seconds": 0.2,
+  "tasks": 800,
+  "observation_seconds": 20.0,
+  "sample_interval_seconds": 1,
+  "started_at": "2026-10-21T17:53:31.105754+00:00",
+  "balance": {
+    "accepted_batch": 800,
+    "accepted_api": 17,
+    "results": 817,
+    "dlq": 0,
+    "remaining": 0
+  },
+  "image_id": "sha256:b36ca6b00441c48a99c309fe7b167d68a9e9b6a95d3f8193695de90176d64d96",
+  "model_versions": [
+    "1"
+  ],
+  "worker_commits": [
+    817
+  ],
+  "mlflow_stopped_during_load": true
+}

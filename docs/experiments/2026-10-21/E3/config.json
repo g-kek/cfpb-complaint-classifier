@@ -1,0 +1,25 @@
+{
+  "mode": "E3",
+  "bounded": false,
+  "workers": 2,
+  "queue": "experiment.34046d6c2644.e3",
+  "queue_limit": null,
+  "prefetch_per_worker": 0,
+  "concurrency_per_worker": 2,
+  "inference_delay_seconds": 0.2,
+  "tasks": 800,
+  "observation_seconds": 20.0,
+  "sample_interval_seconds": 1,
+  "started_at": "2026-10-21T17:24:43.875515+00:00",
+  "balance": {
+    "accepted_batch": 800,
+    "accepted_api": 17,
+    "results": 817,
+    "dlq": 0,
+    "remaining": 0
+  },
+  "image_id": "sha256:f751fb646c1a9d66b825d5e49c5372f69788b15bd859ce3213730258ed18102d",
+  "model_versions": [
+    "1"
+  ]
+}

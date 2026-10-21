@@ -136,7 +136,15 @@ async def test_source_retries_same_task_before_reading_next(tmp_path, monkeypatc
     sleep = AsyncMock()
     monkeypatch.setattr(source.asyncio, "sleep", sleep)
     settings = Settings(source_retry_initial_seconds=0.1, source_retry_max_seconds=0.2)
-    assert await source.publish_file(path, "batch-1", settings) == 2
+    metrics = Mock()
+    assert await source.publish_file(path, "batch-1", settings, metrics) == 2
+    assert [call.kwargs["accepted"] for call in metrics.record.call_args_list] == [
+        False,
+        False,
+        False,
+        True,
+        True,
+    ]
     assert attempts[:4] == [tasks_read[0]] * 4
     assert attempts[4] == tasks_read[1]
     assert [call.args[0] for call in sleep.call_args_list] == [0.1, 0.2, 0.2]
@@ -148,3 +156,27 @@ def test_source_rejects_missing_text_column(tmp_path):
     path.write_text("product\nmortgage\n")
     with pytest.raises(ValueError, match="text column"):
         list(source.read_tasks(path, "batch"))
+
+
+def test_source_metrics_separates_accepted_and_rejected(tmp_path):
+    import csv
+
+    from cfpb_complaint_classifier.metrics import SourceMetrics
+
+    path = tmp_path / "events.csv"
+    metrics = SourceMetrics(path)
+    metrics.record("same-id", accepted=False)
+    metrics.record("same-id", accepted=True)
+    metrics.close()
+    with path.open() as stream:
+        rows = list(csv.DictReader(stream))
+    assert [row["event"] for row in rows] == ["rejected", "accepted"]
+    assert rows[-1]["accepted"] == "1"
+    assert rows[-1]["rejected"] == "1"
+    assert rows[0]["task_id"] == rows[1]["task_id"]
+    with pytest.raises(FileExistsError):
+        SourceMetrics(path)
+    no_file = SourceMetrics()
+    no_file.record("id", accepted=True)
+    no_file.close()
+    assert no_file.accepted == 1

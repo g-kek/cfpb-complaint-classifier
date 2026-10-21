@@ -1,9 +1,7 @@
-"""Completed task storage; the primary key makes redelivery safe."""
-
 import asyncio
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, MetaData, String, Table, Uuid, select
+from sqlalchemy import Column, DateTime, Integer, MetaData, String, Table, Uuid, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -23,6 +21,27 @@ task_results = Table(
     Column("started_at", DateTime(timezone=True), nullable=False),
     Column("completed_at", DateTime(timezone=True), nullable=False),
 )
+task_attempts = Table(
+    "task_attempts",
+    metadata,
+    Column("message_key", String, primary_key=True),
+    Column("attempts", Integer, nullable=False),
+)
+
+
+async def claim_attempt(
+    engine: AsyncEngine, message_key: str, limit: int
+) -> int | None:
+
+    statement = insert(task_attempts).values(message_key=message_key, attempts=1)
+    statement = statement.on_conflict_do_update(
+        index_elements=[task_attempts.c.message_key],
+        set_={"attempts": task_attempts.c.attempts + 1},
+        where=task_attempts.c.attempts < limit,
+    ).returning(task_attempts.c.attempts)
+    async with engine.begin() as connection:
+        attempt = (await connection.execute(statement)).scalar_one_or_none()
+    return attempt
 
 
 async def create_schema(engine: AsyncEngine) -> None:

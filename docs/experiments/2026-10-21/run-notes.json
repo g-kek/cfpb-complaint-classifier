@@ -1,0 +1,17 @@
+{
+  "docker_memory_limit_mib": 2048,
+  "E3": {
+    "mlflow_oom_observed": true,
+    "mlflow_finished_at_utc": "2026-10-21T17:24:46.832874427Z",
+    "batch_results": 800,
+    "api_results": 17,
+    "note": "Loaded workers continued processing independently of MLflow. Repeat before claiming an infrastructure-failure-free comparison."
+  },
+  "E4": {
+    "state": "invalid_worker_oom",
+    "worker_exit_code": 137,
+    "diagnostic_path": "failed-E4-worker-oom",
+    "note": "The first load attempt processed all tasks but lost one worker; it is excluded from comparative conclusions."
+  },
+  "final_revision_verification": "Full E1-E4 repeat saved in ../2026-10-21-final"
+}

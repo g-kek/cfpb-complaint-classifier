@@ -11,7 +11,9 @@ x-task-environment: &task-environment
   SOURCE_RETRY_INITIAL_SECONDS: ${SOURCE_RETRY_INITIAL_SECONDS:-0.05}
   SOURCE_RETRY_MAX_SECONDS: ${SOURCE_RETRY_MAX_SECONDS:-0.5}
   SHUTDOWN_TIMEOUT_SECONDS: ${SHUTDOWN_TIMEOUT_SECONDS:-30}
-  LOG_LEVEL: INFO
+  TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
+  TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-0.5}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
   app:
@@ -81,7 +83,7 @@ services:
         condition: service_completed_successfully
     networks:
       - cfpb
-    stop_grace_period: 40s
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-40s}
     healthcheck:
       test:
         ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=2)"]
@@ -130,6 +132,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-cfpb}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-cfpb-local-password}
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit collect_statistics_interval 1000"
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"

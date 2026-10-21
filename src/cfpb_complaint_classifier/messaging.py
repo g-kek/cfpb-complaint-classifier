@@ -1,5 +1,13 @@
+from hashlib import sha256
+
 from aio_pika.exceptions import AMQPException, DeliveryError
-from faststream.rabbit import Channel, RabbitBroker, RabbitExchange, RabbitQueue
+from faststream.rabbit import (
+    Channel,
+    RabbitBroker,
+    RabbitExchange,
+    RabbitMessage,
+    RabbitQueue,
+)
 from pamqp.commands import Basic
 
 from cfpb_complaint_classifier.core.config import Settings
@@ -7,11 +15,11 @@ from cfpb_complaint_classifier.schemas import TaskMessage
 
 
 class QueueOverloadedError(Exception):
-    """The broker rejected the publication"""
+    pass
 
 
 class BrokerUnavailableError(Exception):
-    """Publication failed or its confirmation was not received in time"""
+    pass
 
 
 def task_exchange(settings: Settings) -> RabbitExchange:
@@ -82,5 +90,33 @@ async def publish_task(
         raise BrokerUnavailableError from None
     if isinstance(confirmation, (Basic.Nack, Basic.Reject)):
         raise QueueOverloadedError
+    if not isinstance(confirmation, Basic.Ack):
+        raise BrokerUnavailableError
+
+
+async def publish_dead_letter(
+    broker: RabbitBroker,
+    settings: Settings,
+    message: RabbitMessage,
+    *,
+    attempts: int,
+    error: str,
+) -> None:
+
+    confirmation = await broker.publish(
+        message.body,
+        exchange=f"{settings.task_queue_name}.dlx",
+        routing_key=f"{settings.task_queue_name}.dlq",
+        persist=True,
+        mandatory=True,
+        message_id=message.raw_message.message_id or sha256(message.body).hexdigest(),
+        content_type=message.content_type,
+        headers={
+            **message.headers,
+            "x-task-attempts": attempts,
+            "x-task-error": error,
+        },
+        timeout=settings.publish_timeout_seconds,
+    )
     if not isinstance(confirmation, Basic.Ack):
         raise BrokerUnavailableError

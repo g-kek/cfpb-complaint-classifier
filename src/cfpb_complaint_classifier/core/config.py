@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     source_retry_initial_seconds: float = Field(default=0.05, gt=0)
     source_retry_max_seconds: float = Field(default=0.5, gt=0)
     shutdown_timeout_seconds: float = Field(default=30.0, gt=0)
+    task_max_attempts: int = Field(default=3, ge=1)
+    task_retry_delay_seconds: float = Field(default=0.5, gt=0)
 
     @model_validator(mode="after")
     def validate_limits(self) -> "Settings":
@@ -44,8 +46,7 @@ class Settings(BaseSettings):
 
     @property
     def retry_after_seconds(self) -> int:
-        # One worker frees a slot roughly every delay / concurrency seconds.
-        # HTTP delay-seconds are integral; one second is the minimum hint.
+
         return max(1, math.ceil(self.inference_delay_seconds / self.worker_concurrency))
 
 

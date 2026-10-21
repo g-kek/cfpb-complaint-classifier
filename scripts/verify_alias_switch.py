@@ -1,5 +1,3 @@
-"""Exercise a running Compose worker and restore the original champion afterward."""
-
 import argparse
 import json
 import os
@@ -38,7 +36,7 @@ def predict(url: str) -> dict:
 
 
 def restart_and_wait(url: str, expected_version: str) -> dict:
-    subprocess.run(["docker", "compose", "restart", "worker"], cwd=ROOT, check=True)  # noqa: S607
+    subprocess.run(["docker", "compose", "restart", "worker"], cwd=ROOT, check=True)
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         try:
@@ -52,7 +50,7 @@ def restart_and_wait(url: str, expected_version: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Verify MLflow alias switching")
     parser.add_argument("--app-url", default="http://127.0.0.1:8080")
     parser.add_argument(
         "--tracking-uri",

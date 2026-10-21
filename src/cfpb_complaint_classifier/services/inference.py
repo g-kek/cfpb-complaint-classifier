@@ -1,5 +1,3 @@
-"""Resolve the deployment alias once, then load an immutable model version."""
-
 import logging
 import os
 from dataclasses import dataclass
@@ -44,8 +42,7 @@ def resolve_model_version(settings: Settings) -> str:
 
 
 def load_registered_model(settings: Settings) -> LoadedModel:
-    # The host and containers both download through the tracking server;
-    # a presigned MinIO URL could reference a hostname unavailable to the host.
+
     os.environ.setdefault("MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD", "false")
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     mlflow.set_registry_uri(settings.mlflow_tracking_uri)
@@ -66,7 +63,6 @@ def load_registered_model(settings: Settings) -> LoadedModel:
 
 
 if __name__ == "__main__":
-    # Compose preflight: a healthy server alone does not imply a registered model.
     settings = get_settings()
     version = resolve_model_version(settings)
     print(f"{settings.mlflow_model_name}@{settings.mlflow_model_alias} -> {version}")
