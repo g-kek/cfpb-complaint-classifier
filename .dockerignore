@@ -16,3 +16,6 @@ data/
 reports/
 mlruns/
 mlartifacts/
+
+.uv-cache/
+.cache/

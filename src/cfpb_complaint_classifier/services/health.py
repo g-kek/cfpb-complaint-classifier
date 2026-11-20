@@ -29,7 +29,7 @@ async def check_postgres(engine: AsyncEngine) -> ComponentHealth:
         )
 
     response_time_ms = round((time.perf_counter() - started_at) * 1000, 2)
-    logger.info("PostgreSQL health check passed in %.2fms", response_time_ms)
+    logger.debug("PostgreSQL health check passed in %.2fms", response_time_ms)
     return ComponentHealth(
         status=HealthStatus.healthy,
         version=str(postgres_version),

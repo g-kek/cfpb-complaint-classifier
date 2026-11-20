@@ -1,0 +1,12 @@
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls: {insecure: true}
+    sending_queue: {queue_size: 64}
+    retry_on_failure: {max_elapsed_time: 30s}
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]

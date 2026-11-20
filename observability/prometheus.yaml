@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+scrape_configs:
+  - job_name: pipeline
+    honor_labels: true
+    static_configs:
+      - targets: [metrics-collector:8889]
+  - job_name: rabbitmq
+    metrics_path: /metrics/detailed
+    params:
+      family: [queue_coarse_metrics]
+    static_configs:
+      - targets: [rabbitmq:15692]

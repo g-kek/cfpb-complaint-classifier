@@ -1,0 +1,28 @@
+sources:
+  containers:
+    type: docker_logs
+    include_labels:
+      - com.docker.compose.project=${COMPOSE_PROJECT_NAME}
+      - pipeline.logs=true
+transforms:
+  entries:
+    type: remap
+    inputs: [containers]
+    drop_on_error: true
+    source: |
+      . = parse_json!(string!(.message))
+      .timestamp = parse_timestamp!(.timestamp, format: "%+")
+sinks:
+  loki:
+    type: loki
+    inputs: [entries]
+    endpoint: http://loki:3100
+    labels:
+      service: "{{ service }}"
+      level: "{{ level }}"
+      env: "{{ env }}"
+    encoding: {codec: json}
+    buffer:
+      type: memory
+      max_events: 2048
+      when_full: drop_newest

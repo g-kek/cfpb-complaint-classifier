@@ -57,7 +57,7 @@ async def harness(monkeypatch):
         app.router.lifespan_context(app),
     ):
 
-        async def send(body=None, message_id="stable-id"):
+        async def send(body=None, message_id="stable-id", headers=None):
             if body is None:
                 body = TaskMessage(task_id=uuid4(), text="debt").model_dump(mode="json")
             await broker.publish(
@@ -65,6 +65,7 @@ async def harness(monkeypatch):
                 queue=task_queue(settings),
                 exchange=task_exchange(settings),
                 message_id=message_id,
+                headers=headers,
             )
 
         yield Mock(
@@ -196,3 +197,78 @@ async def test_dlq_publication_requires_confirm_and_preserves_body(confirmation)
     assert args.kwargs["mandatory"] and args.kwargs["persist"]
     assert args.kwargs["headers"]["x-task-attempts"] == 3
     assert args.kwargs["message_id"] == "stable"
+
+
+@pytest.fixture
+def trace_capture(monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    from cfpb_complaint_classifier import telemetry
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(telemetry, "tracer", provider.get_tracer("test"))
+    yield exporter
+    provider.shutdown()
+
+
+async def test_trace_from_http_through_broker_and_executor(
+    client, harness, trace_capture, monkeypatch
+):
+    from cfpb_complaint_classifier import messaging
+
+    async def forward(broker, settings, task, headers):
+        assert "traceparent" in headers
+        await harness.send(task.model_dump(mode="json"), str(task.task_id), headers)
+
+    monkeypatch.setattr(messaging, "_publish_confirmed", forward)
+    response = await client.post("/api/v1/tasks", json={"text": "sample"})
+    assert response.status_code == 202
+    spans = {s.name: s for s in trace_capture.get_finished_spans()}
+    request = spans["POST /api/v1/tasks"]
+    for child, parent in [
+        ("publish", request),
+        ("process", spans["publish"]),
+        ("inference", spans["process"]),
+        ("db.save_result", spans["process"]),
+    ]:
+        assert spans[child].context.trace_id == request.context.trace_id
+        assert spans[child].parent.span_id == parent.context.span_id
+    assert spans["inference"].attributes["model.alias"] == "champion"
+    assert spans["inference"].attributes["model.version"] == "1"
+
+
+async def test_poison_attempts_correlate_without_leaking_payload(
+    harness, trace_capture
+):
+    from opentelemetry import propagate
+    from opentelemetry.trace import StatusCode
+
+    from cfpb_complaint_classifier import telemetry
+
+    with telemetry.span("publish") as publisher:
+        headers = {}
+        propagate.inject(headers)
+    for _ in range(3):
+        await harness.send({"private": "confidential narrative"}, headers=headers)
+    spans = trace_capture.get_finished_spans()
+    attempts = [s for s in spans if s.name == "process"]
+    assert [s.attributes["delivery.attempt"] for s in attempts] == [1, 2, 3]
+    assert all(
+        s.context.trace_id == publisher.get_span_context().trace_id for s in spans
+    )
+    assert all(s.status.status_code == StatusCode.ERROR for s in attempts)
+    assert all(
+        "confidential narrative" not in str(e.attributes)
+        for s in attempts
+        for e in s.events
+    )
+    assert any(
+        s.name == "publish.dlq" and s.parent.span_id == attempts[-1].context.span_id
+        for s in spans
+    )
