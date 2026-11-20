@@ -40,6 +40,9 @@ serving = [
     "scikit-learn>=1.6,<2",
 ]
 web = [
+    "opentelemetry-sdk>=1.39,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.39,<2",
+    "psutil>=7,<8",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
     "faststream[rabbit]>=0.6,<0.7",
@@ -96,4 +99,3 @@ ignore = [
 "tests/test_pipeline_integration.py" = ["ASYNC109"]
 "scripts/run_backpressure_experiments.py" = ["S603"]
 "scripts/verify_alias_switch.py" = ["S607"]
-"scripts/verify_backpressure_defense.py" = ["ASYNC110"]

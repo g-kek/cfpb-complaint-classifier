@@ -1,0 +1,768 @@
+{
+  "uid": "cfpb-pipeline",
+  "title": "Конвейер",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "5s",
+  "tags": [
+    "cfpb"
+  ],
+  "timezone": "browser",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "worker",
+        "label": "Воркер",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": "label_values(pipeline_process_resident_bytes{job=\"worker\"}, instance)",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "refresh": 2,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Очередь и предел x-max-length",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "RabbitMQ ограничивает сообщения ready. Доставленные воркеру unacked показаны отдельно.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rabbitmq_detailed_queue_messages_ready",
+          "legendFormat": "Готово · {{queue}}",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rabbitmq_detailed_queue_messages_unacked",
+          "legendFormat": "Без подтверждения · {{queue}}",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (queue) (pipeline_queue_limit)",
+          "legendFormat": "Лимит · {{queue}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Источник и пропускная способность",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Окно скорости — одна минута. Переключатель экземпляра влияет на разбивку, общая линия включает все реплики.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(pipeline_source_published_total[1m]))",
+          "legendFormat": "Источник",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(pipeline_worker_processed_total{result=\"ok\"}[1m]))",
+          "legendFormat": "Все воркеры",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (instance) (rate(pipeline_worker_processed_total{result=\"ok\",instance=~\"${worker:regex}\"}[1m]))",
+          "legendFormat": "Воркер {{instance}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Inference · p50 / p95 / p99",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Перцентили по объединённым бакетам за минуту.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(pipeline_worker_inference_seconds_bucket{instance=~\"${worker:regex}\"}[1m])))",
+          "legendFormat": "p50",
+          "range": true,
+          "exemplar": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pipeline_worker_inference_seconds_bucket{instance=~\"${worker:regex}\"}[1m])))",
+          "legendFormat": "p95",
+          "range": true,
+          "exemplar": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pipeline_worker_inference_seconds_bucket{instance=~\"${worker:regex}\"}[1m])))",
+          "legendFormat": "p99",
+          "range": true,
+          "exemplar": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Ответ API · p50 / p95 / p99",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Перцентили по объединённым бакетам за минуту.",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(pipeline_api_duration_seconds_bucket{route=\"/api/v1/tasks\"}[1m])))",
+          "legendFormat": "p50",
+          "range": true,
+          "exemplar": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(pipeline_api_duration_seconds_bucket{route=\"/api/v1/tasks\"}[1m])))",
+          "legendFormat": "p95",
+          "range": true,
+          "exemplar": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(pipeline_api_duration_seconds_bucket{route=\"/api/v1/tasks\"}[1m])))",
+          "legendFormat": "p99",
+          "range": true,
+          "exemplar": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Резидентная память процессов",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pipeline_process_resident_bytes{job=\"source\"}",
+          "legendFormat": "{{job}} · {{instance}}",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pipeline_process_resident_bytes{job=\"worker\",instance=~\"${worker:regex}\"}",
+          "legendFormat": "{{job}} · {{instance}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Доля ответов 503 на создание задачи",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum(rate(pipeline_api_requests_total{route=\"/api/v1/tasks\",status=\"503\"}[1m])) or vector(0)) / (sum(rate(pipeline_api_requests_total{route=\"/api/v1/tasks\"}[1m])) > 0)",
+          "legendFormat": "HTTP 503",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Обратное давление на источник",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(pipeline_source_nacks_total[1m]))",
+          "legendFormat": "Nack/с",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Паузы источника с начала запуска",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pipeline_source_wait_seconds_total",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Сообщения в DLQ",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rabbitmq_detailed_queue_messages_ready{queue=~\".+[.]dlq\"}",
+          "legendFormat": "Глубина · {{queue}}",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "clamp_min(delta(rabbitmq_detailed_queue_messages_ready{queue=~\".+[.]dlq\"}[1m]), 0)",
+          "legendFormat": "Прирост за минуту · {{queue}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Повторные доставки и результаты попыток",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by(result) (rate(pipeline_worker_processed_total{instance=~\"${worker:regex}\"}[1m]))",
+          "legendFormat": "{{result}}",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(pipeline_worker_redeliveries_total{instance=~\"${worker:regex}\"}[1m]))",
+          "legendFormat": "Повторная доставка",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Задачи в обработке",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pipeline_worker_in_flight{instance=~\"${worker:regex}\"}",
+          "legendFormat": "{{instance}}",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "SLO · результат записан за 5 секунд",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(pipeline_task_duration_seconds_bucket{le=\"5\"}[5m])) / (sum(rate(pipeline_task_duration_seconds_count[5m])) > 0)",
+          "legendFormat": "Доля среди завершённых",
+          "range": true,
+          "exemplar": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "vector(0.99)",
+          "legendFormat": "Цель 99%",
+          "range": true,
+          "exemplar": false
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Последние ошибки",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "queryType": "range",
+          "expr": "{level=~\"ERROR|CRITICAL\"} | json",
+          "maxLines": 100
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    }
+  ]
+}
