@@ -56,7 +56,16 @@ def load_registered_model(settings: Settings) -> LoadedModel:
             "Cannot load the registered model. Check MLflow and register the "
             "configured model alias before starting the application."
         ) from None
-    logger.info("Loaded model %s version %s", settings.mlflow_model_name, version)
+    logger.info(
+        "model_loaded",
+        extra={
+            "fields": {
+                "model": settings.mlflow_model_name,
+                "alias": settings.mlflow_model_alias,
+                "version": version,
+            }
+        },
+    )
     return LoadedModel(
         pipeline=pipeline, name=settings.mlflow_model_name, version=version
     )
@@ -64,5 +73,11 @@ def load_registered_model(settings: Settings) -> LoadedModel:
 
 if __name__ == "__main__":
     settings = get_settings()
+    from cfpb_complaint_classifier.core.logging import setup_logging
+
+    setup_logging(settings.log_level)
     version = resolve_model_version(settings)
-    print(f"{settings.mlflow_model_name}@{settings.mlflow_model_alias} -> {version}")
+    logger.info(
+        "model_ready",
+        extra={"fields": {"alias": settings.mlflow_model_alias, "version": version}},
+    )

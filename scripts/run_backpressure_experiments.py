@@ -310,8 +310,10 @@ async def run_mode(args, client, mode, bounded, workers, run_id):
                 logs = (await asyncio.to_thread(container.logs)).decode()
                 count = 0
                 for line in logs.splitlines():
-                    if "task_commit " in line:
-                        event = json.loads(line.split("task_commit ", 1)[1])
+                    if not line.startswith("{"):
+                        continue
+                    event = json.loads(line)
+                    if event.get("message") == "task_commit":
                         commits.setdefault(event["task_id"], event["committed_at"])
                         count += 1
                 worker_commits.append(count)

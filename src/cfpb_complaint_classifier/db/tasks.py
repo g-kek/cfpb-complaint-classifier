@@ -29,6 +29,39 @@ task_attempts = Table(
 )
 
 
+# External publishers may omit W3C headers. Keep the first receive span
+# across RabbitMQ requeues, process restarts and replica changes.
+delivery_traces = Table(
+    "delivery_traces",
+    metadata,
+    Column("message_key", String, primary_key=True),
+    Column("traceparent", String, nullable=False),
+)
+
+
+async def get_or_create_traceparent(engine, key, make_header):
+    async with engine.begin() as conn:
+        inserted = await conn.scalar(
+            insert(delivery_traces)
+            .values(message_key=key, traceparent="")
+            .on_conflict_do_nothing()
+            .returning(delivery_traces.c.message_key)
+        )
+        if inserted is not None:
+            header = make_header()
+            await conn.execute(
+                delivery_traces.update()
+                .where(delivery_traces.c.message_key == key)
+                .values(traceparent=header)
+            )
+            return header
+        return await conn.scalar(
+            select(delivery_traces.c.traceparent).where(
+                delivery_traces.c.message_key == key
+            )
+        )
+
+
 async def claim_attempt(
     engine: AsyncEngine, message_key: str, limit: int
 ) -> int | None:

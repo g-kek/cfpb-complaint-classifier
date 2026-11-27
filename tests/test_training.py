@@ -260,3 +260,30 @@ def test_training_registers_versions_and_loads_champion(tmp_path, prepared_data)
     assert mlflow.sklearn.load_model("models:/test-classifier@champion").predict(
         ["collector debt calls agency harassment owed complaint"]
     ).tolist() == ["Debt collection"]
+
+
+def test_bootstrap_trains_only_for_missing_model(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from mlflow.exceptions import MlflowException
+    from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST
+
+    from training import bootstrap
+
+    registry = Mock()
+    monkeypatch.setattr(bootstrap, "MlflowClient", lambda: registry)
+    registry.get_model_version_by_alias.return_value.status = "READY"
+    train = Mock()
+    monkeypatch.setattr("training.train.train_models", train)
+    bootstrap.main()
+    train.assert_not_called()
+    registry.get_registered_model.side_effect = MlflowException(
+        "missing", RESOURCE_DOES_NOT_EXIST
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("training.prepare.main", Mock())
+    monkeypatch.setattr(bootstrap, "configure_tracking", Mock())
+    monkeypatch.setattr("training.eda.run_eda", Mock(return_value="eda-run"))
+    bootstrap.main()
+    train.assert_called_once()
+    assert train.call_args.args[-1] == "eda-run"

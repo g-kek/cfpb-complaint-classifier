@@ -1,3 +1,5 @@
+import logging
+import time
 from hashlib import sha256
 
 from aio_pika.exceptions import AMQPException, DeliveryError
@@ -8,9 +10,13 @@ from faststream.rabbit import (
     RabbitMessage,
     RabbitQueue,
 )
+from opentelemetry import propagate
+from opentelemetry.trace import SpanKind
 from pamqp.commands import Basic
 
+from cfpb_complaint_classifier import telemetry
 from cfpb_complaint_classifier.core.config import Settings
+from cfpb_complaint_classifier.core.logging import batch_id
 from cfpb_complaint_classifier.schemas import TaskMessage
 
 
@@ -46,6 +52,7 @@ def task_queue(settings: Settings) -> RabbitQueue:
 def create_broker(settings: Settings, *, consumer: bool = False) -> RabbitBroker:
     return RabbitBroker(
         settings.rabbitmq_url,
+        logger=None,
         timeout=settings.publish_timeout_seconds,
         graceful_timeout=settings.shutdown_timeout_seconds,
         default_channel=Channel(
@@ -72,18 +79,32 @@ async def declare_topology(broker: RabbitBroker, settings: Settings) -> None:
 async def publish_task(
     broker: RabbitBroker, settings: Settings, task: TaskMessage
 ) -> None:
+    with telemetry.span(
+        "publish", kind=SpanKind.PRODUCER, attributes={"task.id": str(task.task_id)}
+    ):
+        headers = {"published_ns": time.time_ns()}
+        if batch_id.get():
+            headers["batch_id"] = batch_id.get()
+        propagate.inject(headers)
+        await _publish_confirmed(broker, settings, task, headers)
+        logging.getLogger(__name__).info("task_published")
+
+
+async def _publish_confirmed(broker, settings, task, headers):
     try:
         confirmation = await broker.publish(
             task.model_dump(mode="json"),
             exchange=task_exchange(settings),
             routing_key=settings.task_queue_name,
             message_id=str(task.task_id),
+            correlation_id=str(task.task_id),
+            headers=headers,
             persist=True,
             mandatory=True,
             timeout=settings.publish_timeout_seconds,
         )
     except DeliveryError as exc:
-        if isinstance(exc.frame, Basic.Nack):
+        if isinstance(exc.frame, (Basic.Nack, Basic.Reject)):
             raise QueueOverloadedError from None
         raise BrokerUnavailableError from None
     except (AMQPException, OSError, TimeoutError):
@@ -103,6 +124,8 @@ async def publish_dead_letter(
     error: str,
 ) -> None:
 
+    headers = dict(message.headers)
+    propagate.inject(headers)
     confirmation = await broker.publish(
         message.body,
         exchange=f"{settings.task_queue_name}.dlx",
@@ -111,8 +134,9 @@ async def publish_dead_letter(
         mandatory=True,
         message_id=message.raw_message.message_id or sha256(message.body).hexdigest(),
         content_type=message.content_type,
+        correlation_id=message.correlation_id,
         headers={
-            **message.headers,
+            **headers,
             "x-task-attempts": attempts,
             "x-task-error": error,
         },

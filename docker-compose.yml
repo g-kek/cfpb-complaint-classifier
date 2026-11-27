@@ -14,13 +14,40 @@ x-task-environment: &task-environment
   TASK_MAX_ATTEMPTS: ${TASK_MAX_ATTEMPTS:-3}
   TASK_RETRY_DELAY_SECONDS: ${TASK_RETRY_DELAY_SECONDS:-0.5}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  OTEL_DISCOVER_COLLECTOR: ${OTEL_DISCOVER_COLLECTOR:-true}
+  OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://collector:4318}
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: ${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:-http://metrics-collector:4318/v1/metrics}
+  OTEL_EXPORTER_OTLP_TIMEOUT: ${OTEL_EXPORTER_OTLP_TIMEOUT:-1}
+  OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-5000}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+  OTEL_ENVIRONMENT: ${OTEL_ENVIRONMENT:-development}
+  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.version=${OTEL_SERVICE_VERSION:-0.1.0},deployment.environment.name=${OTEL_ENVIRONMENT:-development}}
+  OTEL_BSP_MAX_QUEUE_SIZE: 1024
+  OTEL_BSP_MAX_EXPORT_BATCH_SIZE: 128
+  OTEL_BSP_SCHEDULE_DELAY: 1000
+
+x-observer: &observer
+  networks: [cfpb]
+  environment: {GOMAXPROCS: "2"}
+
+x-collector: &collector
+  <<: *observer
+  image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION:-0.134.0}
+  mem_limit: 128m
+  volumes:
+    - ./observability/collector:/conf:ro
 
 services:
   app:
+    labels: {pipeline.logs: "true"}
     build:
       context: .
     image: cfpb-complaint-classifier:local
     environment:
+      OTEL_SERVICE_NAME: ${API_OTEL_SERVICE_NAME:-api}
+      OTEL_INSTANCE_ID: ${API_INSTANCE_ID:-api-1}
       <<: *task-environment
     ports:
       - "8080:8000"
@@ -57,6 +84,7 @@ services:
         max-file: "3"
 
   worker:
+    labels: {pipeline.logs: "true"}
     build:
       context: .
     image: cfpb-complaint-classifier:local
@@ -69,7 +97,9 @@ services:
       - --port
       - "8001"
     environment:
+      OTEL_SERVICE_NAME: ${WORKER_OTEL_SERVICE_NAME:-worker}
       <<: *task-environment
+      MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR: "false"
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
       MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
@@ -98,6 +128,7 @@ services:
           memory: 1G
 
   source:
+    labels: {pipeline.logs: "true"}
     profiles: ["batch"]
     build:
       context: .
@@ -105,9 +136,12 @@ services:
     entrypoint: ["python", "-m", "cfpb_complaint_classifier.source"]
     command: ["/app/data/cfpb/test.csv", "--batch-id", "cfpb-test-v1"]
     environment:
+      OTEL_SERVICE_NAME: ${SOURCE_OTEL_SERVICE_NAME:-source}
+      OTEL_INSTANCE_ID: ${SOURCE_INSTANCE_ID:-batch-source}
       <<: *task-environment
     volumes:
       - ./data:/app/data:ro
+      - ./docs/experiments/2026-10-21-final/input.csv:/app/example.csv:ro
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -136,7 +170,9 @@ services:
     ports:
       - "127.0.0.1:5672:5672"
       - "127.0.0.1:15672:15672"
+      - "127.0.0.1:15692:15692"
     volumes:
+      - ./docker/rabbitmq-plugins:/etc/rabbitmq/enabled_plugins:ro
       - rabbitmq-data:/var/lib/rabbitmq
     networks:
       - cfpb
@@ -149,12 +185,16 @@ services:
   model-check:
     build:
       context: .
+      dockerfile: docker/training.Dockerfile
     image: cfpb-model-check:local
-    command: ["python", "-m", "cfpb_complaint_classifier.services.inference"]
+    command: ["python", "-m", "training.bootstrap"]
     environment:
+      MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR: "false"
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
       MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
+    volumes:
+      - ./data:/app/data
     depends_on:
       mlflow:
         condition: service_healthy
@@ -162,11 +202,13 @@ services:
       - cfpb
 
   training:
+    image: cfpb-training:local
     profiles: ["training"]
     build:
       context: .
       dockerfile: docker/training.Dockerfile
     environment:
+      MLFLOW_ENABLE_ARTIFACTS_PROGRESS_BAR: "false"
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_MODEL_NAME: ${MLFLOW_MODEL_NAME:-cfpb-complaint-classifier}
       MLFLOW_MODEL_ALIAS: ${MLFLOW_MODEL_ALIAS:-champion}
@@ -191,7 +233,7 @@ services:
       - cfpb
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.10-alpine
     environment:
       POSTGRES_DB: cfpb
       POSTGRES_USER: postgres
@@ -219,7 +261,7 @@ services:
         max-file: "3"
 
   mlflow-db:
-    image: postgres:16-alpine
+    image: postgres:16.10-alpine
     environment:
       POSTGRES_DB: mlflow
       POSTGRES_USER: mlflow
@@ -312,7 +354,109 @@ services:
       retries: 10
       start_period: 30s
 
+  loki:
+    <<: *observer
+    profiles: [logs, observability]
+    image: grafana/loki:${LOKI_VERSION:-3.5.5}
+    mem_limit: 320m
+    command: [-config.file=/etc/loki/pipeline.yaml]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/pipeline.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-qO", "/dev/null", "http://127.0.0.1:3100/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  vector:
+    <<: *observer
+    profiles: [logs, observability]
+    image: timberio/vector:${VECTOR_VERSION:-0.49.0-alpine}
+    mem_limit: 128m
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME}
+      VECTOR_THREADS: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./observability/vector.yaml:/etc/vector/vector.yaml:ro
+    depends_on: [loki]
+
+  tempo:
+    <<: *observer
+    profiles: [traces, observability]
+    image: grafana/tempo:${TEMPO_VERSION:-2.8.2}
+    mem_limit: 256m
+    command: [-config.file=/etc/tempo.yaml]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    healthcheck:
+      test: ["CMD", "/busybox/wget", "-qO", "/dev/null", "http://127.0.0.1:3200/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+  collector:
+    <<: *collector
+    profiles: [traces, observability]
+    command: ["--config=/conf/common.yaml", "--config=/conf/traces.yaml"]
+    depends_on: [tempo]
+
+  metrics-collector:
+    <<: *collector
+    profiles: [metrics, observability]
+    command: ["--config=/conf/common.yaml", "--config=/conf/metrics.yaml"]
+
+  prometheus:
+    <<: *observer
+    profiles: [metrics, observability]
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v3.5.0}
+    mem_limit: 224m
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --storage.tsdb.retention.size=256MB
+      - --enable-feature=exemplar-storage
+    ports: ["127.0.0.1:9090:9090"]
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  grafana:
+    <<: *observer
+    profiles: [observability]
+    image: grafana/grafana:${GRAFANA_VERSION:-12.1.1}
+    mem_limit: 288m
+    environment:
+      GOMAXPROCS: "2"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-cfpb-local-grafana}
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline.json
+    ports: ["127.0.0.1:3000:3000"]
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
 volumes:
+  loki-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:
   rabbitmq-data:
   postgres-data:
   mlflow-db-data:
